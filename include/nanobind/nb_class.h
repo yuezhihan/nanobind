@@ -350,6 +350,33 @@ private:
     }
 };
 
+
+/// Given a pointer to a member function, cast it to its `Derived` version.
+/// Forward everything else unchanged.
+
+template <typename Base, typename Derived>
+using is_accessible_base_of
+    = std::bool_constant<(std::is_same<Base, Derived>::value || std::is_base_of<Base, Derived>::value)
+                    && std::is_convertible<Derived *, Base *>::value>;
+
+template <typename /*Derived*/, typename F>
+auto method_adaptor(F &&f) -> decltype(std::forward<F>(f)) { return std::forward<F>(f); }
+
+template <typename Derived, typename Return, typename Class, typename... Args>
+auto method_adaptor(Return (Class::*pmf)(Args...)) -> Return (Derived::*)(Args...) {
+    static_assert(is_accessible_base_of<Class, Derived>::value,
+        "Cannot bind an inaccessible base class method; use a lambda definition instead");
+    return pmf;
+}
+
+template <typename Derived, typename Return, typename Class, typename... Args>
+auto method_adaptor(Return (Class::*pmf)(Args...) const) -> Return (Derived::*)(Args...) const {
+    static_assert(is_accessible_base_of<Class, Derived>::value,
+        "Cannot bind an inaccessible base class method; use a lambda definition instead");
+    return pmf;
+}
+
+
 template <typename T, typename... Ts>
 class class_ : public object {
 public:
@@ -442,7 +469,7 @@ public:
 
     template <typename Func, typename... Extra>
     NB_INLINE class_ &def(const char *name_, Func &&f, const Extra &... extra) {
-        cpp_function_def((detail::forward_t<Func>) f, scope(*this), name(name_),
+        cpp_function_def(method_adaptor<T>((detail::forward_t<Func>) f), scope(*this), name(name_),
                          is_method(), extra...);
         return *this;
     }
@@ -476,12 +503,12 @@ public:
         object get_p, set_p;
 
         if constexpr (!std::is_same_v<Getter, std::nullptr_t>)
-            get_p = cpp_function((detail::forward_t<Getter>) getter,
+            get_p = cpp_function(method_adaptor<T>((detail::forward_t<Getter>) getter),
                                  scope(*this), is_method(), is_getter(),
                                  rv_policy::reference_internal, extra...);
 
         if constexpr (!std::is_same_v<Setter, std::nullptr_t>)
-            set_p = cpp_function((detail::forward_t<Setter>) setter,
+            set_p = cpp_function(method_adaptor<T>((detail::forward_t<Setter>) setter),
                                  scope(*this), is_method(), extra...);
 
         detail::property_install(m_ptr, name_, get_p.ptr(), set_p.ptr());
